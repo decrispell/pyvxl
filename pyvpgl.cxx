@@ -7,7 +7,6 @@
 #include <vpgl/vpgl_utm.h>
 #include <vgl/vgl_point_3d.h>
 #include <vgl/vgl_point_2d.h>
-#include <vgl/vgl_homg_point_2d.h>
 #include <vgl/vgl_vector_3d.h>
 #include <vgl/vgl_vector_2d.h>
 #include <vgl/vgl_homg_point_2d.h>
@@ -21,7 +20,9 @@
 // For rational to affine //
 #include <vnl/vnl_random.h>
 #include <vpgl/vpgl_local_rational_camera.h>
+#include <vpgl/algo/vpgl_camera_compute.h>
 #include <vpgl/algo/vpgl_affine_rectification.h>
+#include <vgl/vgl_ray_3d.h>
 // ====================== //
 
 #include "pyvxl_util.h"
@@ -67,7 +68,22 @@ void wrap_vpgl(py::module &m)
 
   py::class_<vpgl_affine_camera<double>, vpgl_proj_camera<double> >(m, "affine_camera")
     .def(py::init<vnl_matrix_fixed<double,3,4> >())
-    .def("__str__", stream2str<vpgl_proj_camera<double> >);
+    .def("__str__", stream2str<vpgl_proj_camera<double> >)
+    .def("project",
+      [](vpgl_affine_camera<double> &cam, double x, double y, double z)
+      {
+        double u, v;
+        cam.project(x, y, z, u, v);
+        return std::make_tuple(u, v);
+      }
+    )
+    .def("backproject_ray",
+      [](vpgl_affine_camera<double> &cam, double u, double v){
+        vgl_homg_point_2d<double> image_point(u, v);
+        vgl_ray_3d<double> ray = cam.backproject_ray(image_point);
+        return ray;
+      }
+    );
 
   py::class_<vpgl_calibration_matrix<double> >(m, "calibration_matrix")
     .def(py::init<vnl_matrix_fixed<double,3,3> >())
@@ -124,12 +140,23 @@ void wrap_vpgl(py::module &m)
   py::class_<vpgl_local_rational_camera<double> >(m, "local_rational_camera")
     .def(py::init<>())
     .def("__str__", stream2str<vpgl_local_rational_camera<double> >)
+    .def("from_file",
+      [](vpgl_local_rational_camera<double> &R, std::string fname){
+        R = *read_local_rational_camera<double>(fname);
+      }
+    )
     .def("project",
       [](vpgl_local_rational_camera<double> &R, const double x, const double y, const double z)
       {
         vgl_point_3d<double> world_point(x,y,z);                                 
         vgl_point_2d<double> img_point = R.project(world_point);
         return std::make_tuple(img_point.x(), img_point.y());
+      }
+    )
+    .def("get_lvcs",
+      [](vpgl_local_rational_camera<double> &R)
+      {
+        return R.lvcs();
       }
     );
 
@@ -142,14 +169,14 @@ void wrap_vpgl(py::module &m)
       double min_x, double min_y, double min_z, 
       double max_x, double max_y, double max_z, unsigned n_points) 
     {
-      if (n_points < 10)
-        n_points = 10;   // make it minimum 10 points
+      if (n_points < 100)
+        n_points = 100; // make it minimum 100 points
 
       double width = max_x - min_x;
       double depth = max_y - min_y;
       double height = max_z - min_z;
 
-      std::cout << " Using: " << n_points << " to find the affine camera!\n";
+      std::cout << " Using: " << n_points << " points to find the affine camera!\n";
       std::cout << " w: " << width << " d: " << depth << " h: " << height << '\n';
       std::vector< vgl_point_2d<double> > image_pts;
       std::vector< vgl_point_3d<double> > world_pts;
@@ -163,7 +190,7 @@ void wrap_vpgl(py::module &m)
         world_pts.push_back(vgl_point_3d<double>(x,y,z));
         double u, v;
         camera.project(x,y,z,u,v);  // local rational camera has an lvcs, so it handles 
-                                     // local coord to global to image point projection internally
+                                    // local coord to global to image point projection internally
         image_pts.push_back(vgl_point_2d<double>(u,v));
       }
 
